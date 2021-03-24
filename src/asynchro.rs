@@ -291,7 +291,11 @@ macro_rules! resampler_sincfixedin {
             ///
             /// The function returns an error if the length of the input data is not equal
             /// to the number of channels and chunk size defined when creating the instance.
-            fn process(&mut self, wave_in: &[Vec<$t>]) -> Res<Vec<Vec<$t>>> {
+            fn process_into_buffer(
+                &mut self,
+                wave_in: &[Vec<$t>],
+                wave_out: &mut Vec<Vec<$t>>,
+            ) -> Res<()> {
                 if wave_in.len() != self.nbr_channels {
                     return Err(Box::new(ResamplerError::new(
                         "Wrong number of channels in input",
@@ -318,17 +322,14 @@ macro_rules! resampler_sincfixedin {
                     }
                 }
 
-                let mut wave_out = vec![Vec::new(); self.nbr_channels];
+                wave_out.resize(self.nbr_channels, Vec::new());
 
                 for chan in used_channels.iter() {
                     for (idx, sample) in wave_in[*chan].iter().enumerate() {
                         self.buffer[*chan][idx + 2 * sinc_len] = *sample;
                     }
-                    wave_out[*chan] = vec![
-                        0.0 as $t;
-                        (self.chunk_size as f64 * self.resample_ratio + 10.0)
-                            as usize
-                    ];
+                    let new_len = (self.chunk_size as f64 * self.resample_ratio + 10.0) as usize;
+                    wave_out[*chan].resize(new_len, 0.0);
                 }
 
                 let mut idx = self.last_index;
@@ -415,7 +416,7 @@ macro_rules! resampler_sincfixedin {
                     self.chunk_size,
                     n,
                 );
-                Ok(wave_out)
+                Ok(())
             }
 
             /// Update the resample ratio. New value must be within +-10% of the original one
@@ -560,7 +561,7 @@ macro_rules! resampler_sincfixedout {
             /// The function returns an error if the length of the input data is not
             /// equal to the number of channels defined when creating the instance,
             /// and the number of audio frames given by "nbr_frames_needed".
-            fn process(&mut self, wave_in: &[Vec<$t>]) -> Res<Vec<Vec<$t>>> {
+            fn process_into_buffer(&mut self, wave_in: &[Vec<$t>], wave_out: &mut Vec<Vec<$t>>) -> Res<()> {
                 //update buffer with new data
                 if wave_in.len() != self.nbr_channels {
                     return Err(Box::new(ResamplerError::new(
@@ -587,13 +588,13 @@ macro_rules! resampler_sincfixedout {
                 }
                 self.current_buffer_fill = self.needed_input_size;
 
-                let mut wave_out = vec![Vec::new(); self.nbr_channels];
+                wave_out.resize(self.nbr_channels, Vec::new());
 
                 for chan in used_channels.iter() {
                     for (idx, sample) in wave_in[*chan].iter().enumerate() {
                         self.buffer[*chan][idx + 2 * sinc_len] = *sample;
                     }
-                    wave_out[*chan] = vec![0.0 as $t; self.chunk_size];
+                    wave_out[*chan].resize(self.chunk_size, 0.0);
                 }
 
                 let mut idx = self.last_index;
@@ -679,7 +680,7 @@ macro_rules! resampler_sincfixedout {
                     self.needed_input_size,
                     self.last_index
                 );
-                Ok(wave_out)
+                Ok(())
             }
         }
     }

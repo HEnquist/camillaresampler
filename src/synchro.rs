@@ -268,7 +268,11 @@ macro_rules! resampler_FftFixedinout {
             ///
             /// The function returns an error if the size of the input data is not equal
             /// to the number of channels and input size defined when creating the instance.
-            fn process(&mut self, wave_in: &[Vec<$t>]) -> Res<Vec<Vec<$t>>> {
+            fn process_into_buffer(
+                &mut self,
+                wave_in: &[Vec<$t>],
+                wave_out: &mut Vec<Vec<$t>>,
+            ) -> Res<()> {
                 if wave_in.len() != self.nbr_channels {
                     return Err(Box::new(ResamplerError::new(
                         "Wrong number of channels in input",
@@ -290,9 +294,9 @@ macro_rules! resampler_FftFixedinout {
                         }
                     }
                 }
-                let mut wave_out = vec![Vec::new(); self.nbr_channels];
+                wave_out.resize(self.nbr_channels, Vec::new());
                 for chan in used_channels.iter() {
-                    wave_out[*chan] = vec![0.0 as $t; self.chunk_size_out];
+                    wave_out[*chan].resize(self.chunk_size_out, 0.0);
                 }
 
                 for n in used_channels.iter() {
@@ -302,7 +306,7 @@ macro_rules! resampler_FftFixedinout {
                         &mut self.overlaps[*n],
                     )
                 }
-                Ok(wave_out)
+                Ok(())
             }
         }
     };
@@ -401,7 +405,11 @@ macro_rules! resampler_FftFixedout {
             /// The function returns an error if the length of the input data is not
             /// equal to the number of channels defined when creating the instance,
             /// and the number of audio frames given by "nbr_frames_needed".
-            fn process(&mut self, wave_in: &[Vec<$t>]) -> Res<Vec<Vec<$t>>> {
+            fn process_into_buffer(
+                &mut self,
+                wave_in: &[Vec<$t>],
+                wave_out: &mut Vec<Vec<$t>>,
+            ) -> Res<()> {
                 if wave_in.len() != self.nbr_channels {
                     return Err(Box::new(ResamplerError::new(
                         "Wrong number of channels in input",
@@ -424,9 +432,11 @@ macro_rules! resampler_FftFixedout {
                     }
                 }
 
-                let mut wave_out = vec![Vec::new(); self.nbr_channels];
+                wave_out.resize(self.nbr_channels, Vec::new());
                 for chan in used_channels.iter() {
-                    wave_out[*chan] = self.output_buffers[*chan].clone();
+                    let new_len = self.output_buffers[*chan].len();
+                    wave_out[*chan].resize(new_len, 0.0);
+                    wave_out[*chan].copy_from_slice(&self.output_buffers[*chan]);
                 }
 
                 for n in used_channels.iter() {
@@ -463,7 +473,7 @@ macro_rules! resampler_FftFixedout {
                 let chunks_needed =
                     (frames_needed_out as f32 / self.fft_size_out as f32).ceil() as usize;
                 self.frames_needed = chunks_needed * self.fft_size_in;
-                Ok(wave_out)
+                Ok(())
             }
         }
     };
@@ -558,7 +568,11 @@ macro_rules! resampler_FftFixedin {
             /// The function returns an error if the length of the input data is not
             /// equal to the number of channels defined when creating the instance,
             /// and the number of audio frames given by "nbr_frames_needed".
-            fn process(&mut self, wave_in: &[Vec<$t>]) -> Res<Vec<Vec<$t>>> {
+            fn process_into_buffer(
+                &mut self,
+                wave_in: &[Vec<$t>],
+                wave_out: &mut Vec<Vec<$t>>,
+            ) -> Res<()> {
                 if wave_in.len() != self.nbr_channels {
                     return Err(Box::new(ResamplerError::new(
                         "Wrong number of channels in input",
@@ -610,9 +624,10 @@ macro_rules! resampler_FftFixedin {
 
                 let nbr_chunks_ready =
                     (self.saved_frames as f32 / self.fft_size_in as f32).floor() as usize;
-                let mut wave_out = vec![Vec::new(); self.nbr_channels];
+                wave_out.resize(self.nbr_channels, Vec::new());
+
                 for chan in used_channels.iter() {
-                    wave_out[*chan] = vec![0.0; nbr_chunks_ready * self.fft_size_out];
+                    wave_out[*chan].resize(nbr_chunks_ready * self.fft_size_out, 0.0);
                 }
                 for n in used_channels.iter() {
                     for (in_chunk, out_chunk) in input_temp[*n]
@@ -642,7 +657,7 @@ macro_rules! resampler_FftFixedin {
                     }
                 }
                 self.saved_frames = extra;
-                Ok(wave_out)
+                Ok(())
             }
         }
     };

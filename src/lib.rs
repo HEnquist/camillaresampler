@@ -184,7 +184,19 @@ pub enum InterpolationType {
 pub trait Resampler<T> {
     /// Resample a chunk of audio. Input and output data is stored in a vector,
     /// where each element contains a vector with all samples for a single channel.
-    fn process(&mut self, wave_in: &[Vec<T>]) -> Res<Vec<Vec<T>>>;
+    fn process(&mut self, wave_in: &[Vec<T>]) -> Res<Vec<Vec<T>>> {
+        let mut wave_out = Vec::new();
+        self.process_into_buffer(wave_in, &mut wave_out)?;
+        Ok(wave_out)
+    }
+
+    /// Resample a chunk of audio. Input and output data is stored in a vector,
+    /// where each element contains a vector with all samples for a single channel.
+    ///
+    /// This is the same as [process] except that it can re-use the `wave_out`
+    /// buffers for the output waveforms. The `wave_out` buffer doesn't have to
+    /// be zeroed between intermediate calls.
+    fn process_into_buffer(&mut self, wave_in: &[Vec<T>], wave_out: &mut Vec<Vec<T>>) -> Res<()>;
 
     /// Update the resample ratio.
     fn set_resample_ratio(&mut self, new_ratio: f64) -> Res<()>;
