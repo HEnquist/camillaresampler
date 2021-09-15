@@ -78,7 +78,7 @@ impl AvxSample for f32 {
             acc = _mm256_fmadd_ps(w, *sinc.get_unchecked(s_idx), acc);
             w_idx += 8;
         }
-        let acc_high = _mm256_extractf128_ps(acc, 1);
+        let acc_high = _mm256_extractf128_ps::<1>(acc);
         let acc_low = _mm_add_ps(acc_high, _mm256_castps256_ps128(acc));
         let temp2 = _mm_hadd_ps(acc_low, acc_low);
         let temp1 = _mm_hadd_ps(temp2, temp2);
@@ -128,7 +128,7 @@ impl AvxSample for f64 {
             s_idx += 2;
         }
         let acc_all = _mm256_add_pd(acc0, acc1);
-        let acc_high = _mm256_extractf128_pd(acc_all, 1);
+        let acc_high = _mm256_extractf128_pd::<1>(acc_all);
         let temp2 = _mm_add_pd(acc_high, _mm256_castpd256_pd128(acc_all));
         let temp1 = _mm_hadd_pd(temp2, temp2);
         let mut result = 0.0;
