@@ -54,12 +54,7 @@ pub trait SincInterpolator<T>: Send {
     fn get_sinc_interpolated(&self, wave: &[T], index: usize, subindex: usize) -> T;
 
     /// Get sinc length.
-    fn len(&self) -> usize;
-
-    /// Check if sincs are empty.
-    fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
+    fn nbr_points(&self) -> usize;
 
     /// Get number of sincs used for oversampling.
     fn nbr_sincs(&self) -> usize;
@@ -117,7 +112,7 @@ where
         }
     }
 
-    fn len(&self) -> usize {
+    fn nbr_points(&self) -> usize {
         self.length
     }
 

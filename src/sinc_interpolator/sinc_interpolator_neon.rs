@@ -173,7 +173,7 @@ where
         unsafe { T::get_sinc_interpolated_unsafe(wave, index, subindex, &self.sincs, self.length) }
     }
 
-    fn len(&self) -> usize {
+    fn nbr_points(&self) -> usize {
         self.length
     }
 

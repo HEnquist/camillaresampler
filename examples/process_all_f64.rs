@@ -1,8 +1,8 @@
 extern crate rubato;
 use audioadapter::direct::InterleavedSlice;
 use rubato::{
-    calculate_cutoff, Async, FixedAsync, Indexing, PolynomialDegree, Resampler,
-    SincInterpolationParameters, SincInterpolationType, WindowFunction,
+    calculate_cutoff, Async, FixedAsync, PolynomialDegree, Resampler, SincInterpolationParameters,
+    SincInterpolationType, WindowFunction,
 };
 #[cfg(feature = "fft_resampler")]
 use rubato::{Fft, FixedSync};
@@ -20,20 +20,8 @@ use log::LevelFilter;
 const BYTE_PER_SAMPLE: usize = 8;
 
 // A resampler app that reads a raw file of little-endian 64 bit floats, and writes the output in the same format.
-// The command line arguments are resampler type, input filename, output filename, input samplerate, output samplerate, number of channels
-// To use a sinc resampler with fixed input size to resample the file `sine_f64_2ch.raw` from 44.1kHz to 192kHz, and assuming the file has two channels, the command is:
-// ```
-// cargo run --release --example process_f64 SincFixedInput sine_f64_2ch.raw test.raw 44100 192000 2
-// ```
-// There are two helper python scripts for testing.
-//  - `makesineraw.py` to generate test files in raw format.
-//    Run it with the `-h` flag for instructions.
-//  - `analyze_result.py` to analyze the result.
-//    This takes three arguments: number of channels, samplerate, and sample format.
-//    Example, to analyze the file created above:
-//    ```
-//    python examples/analyze_result.py test.raw 2 192000 f64
-//    ```
+// This example is a variation of the `process_f64`, example that uses the `process_all_into_buffer`
+// convenience method to process the entire file with a single call.
 
 /// Helper to read an entire file to memory as f64 values
 fn read_file<R: Read + Seek>(inbuffer: &mut R) -> Vec<f64> {
@@ -51,13 +39,8 @@ fn read_file<R: Read + Seek>(inbuffer: &mut R) -> Vec<f64> {
 }
 
 /// Helper to write all frames to a file
-fn write_file<W: Write + Seek>(
-    data: &[f64],
-    output: &mut W,
-    values_to_skip: usize,
-    values_to_write: usize,
-) {
-    for value in data.iter().skip(values_to_skip).take(values_to_write) {
+fn write_file<W: Write + Seek>(data: &[f64], output: &mut W, values_to_write: usize) {
+    for value in data.iter().take(values_to_write) {
         let bytes = value.to_le_bytes();
         output.write_all(&bytes).unwrap();
     }
@@ -159,56 +142,27 @@ fn main() {
     };
 
     // Prepare
-    let mut input_frames_next = resampler.input_frames_next();
-    let resampler_delay = resampler.output_delay();
-
     let input_adapter = InterleavedSlice::new(&indata, channels, nbr_input_frames).unwrap();
     let outdata_capacity = outdata.len() / channels;
     let mut output_adapter =
         InterleavedSlice::new_mut(&mut outdata, channels, outdata_capacity).unwrap();
 
-    println!("Process all full chunks");
+    println!("Processing...");
     let start = Instant::now();
-    let mut indexing = Indexing {
-        input_offset: 0,
-        output_offset: 0,
-        active_channels_mask: None,
-        partial_len: None,
-    };
-    let mut input_frames_left = nbr_input_frames;
 
-    while input_frames_left >= input_frames_next {
-        let (nbr_in, nbr_out) = resampler
-            .process_into_buffer(&input_adapter, &mut output_adapter, Some(&indexing))
-            .unwrap();
-
-        indexing.input_offset += nbr_in;
-        indexing.output_offset += nbr_out;
-        input_frames_left -= nbr_in;
-        input_frames_next = resampler.input_frames_next();
-    }
-
-    println!("Process a partial chunk with the last frames.");
-    indexing.partial_len = Some(input_frames_left);
-    let (_nbr_in, _nbr_out) = resampler
-        .process_into_buffer(&input_adapter, &mut output_adapter, Some(&indexing))
+    let (nbr_in, nbr_out) = resampler
+        .process_all_into_buffer(&input_adapter, &mut output_adapter, nbr_input_frames, None)
         .unwrap();
 
     let duration = start.elapsed();
     println!("Resampling took: {:?}", duration);
 
-    let nbr_output_frames = (nbr_input_frames as f32 * fs_out as f32 / fs_in as f32) as usize;
     println!(
         "Processed {} input frames into {} output frames",
-        nbr_input_frames, nbr_output_frames
+        nbr_in, nbr_out
     );
 
     println!("Write output to file, trimming off the silent frames from both ends.");
     let mut file_out_disk = BufWriter::new(File::create(file_out).unwrap());
-    write_file(
-        &outdata,
-        &mut file_out_disk,
-        resampler_delay * channels,
-        nbr_output_frames * channels,
-    );
+    write_file(&outdata, &mut file_out_disk, nbr_out * channels);
 }

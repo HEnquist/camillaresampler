@@ -1,4 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
+extern crate audioadapter;
 extern crate rubato;
 
 use rubato::sinc_interpolator::ScalarInterpolator;
@@ -10,29 +11,42 @@ use rubato::sinc_interpolator::sinc_interpolator_neon::NeonInterpolator;
 #[cfg(target_arch = "x86_64")]
 use rubato::sinc_interpolator::sinc_interpolator_sse::SseInterpolator;
 
+use audioadapter::owned::InterleavedOwned;
+
 #[cfg(feature = "fft_resampler")]
-use rubato::FftFixedIn;
+use rubato::Fft;
 use rubato::{
-    FastFixedIn, PolynomialDegree, Resampler, SincFixedIn, SincInterpolationType, WindowFunction,
+    Async, FixedAsync, FixedSync, PolynomialDegree, Resampler, SincInterpolationType,
+    WindowFunction,
 };
 
 #[cfg(feature = "fft_resampler")]
-fn bench_fftfixedin(c: &mut Criterion) {
+fn bench_fft_64(c: &mut Criterion) {
     let chunksize = 1024;
-    let mut resampler = FftFixedIn::<f64>::new(44100, 192000, 1024, 2, 1).unwrap();
-    let waveform = vec![vec![0.0 as f64; chunksize]; 1];
-    c.bench_function("FftFixedIn f64", |b| {
-        b.iter(|| resampler.process(black_box(&waveform), None).unwrap())
+    let mut resampler = Fft::<f64>::new(44100, 192000, 1024, 2, 1, FixedSync::Input).unwrap();
+    let buffer_in = InterleavedOwned::new(0.0, 1, chunksize);
+    let mut buffer_out = InterleavedOwned::new(0.0, 1, resampler.output_frames_max());
+    c.bench_function("fft sync f64", |b| {
+        b.iter(|| {
+            resampler
+                .process_into_buffer(black_box(&buffer_in), &mut buffer_out, None)
+                .unwrap()
+        })
     });
 }
 
 #[cfg(feature = "fft_resampler")]
-fn bench_fftfixedin_32(c: &mut Criterion) {
+fn bench_fft_32(c: &mut Criterion) {
     let chunksize = 1024;
-    let mut resampler = FftFixedIn::<f32>::new(44100, 192000, 1024, 2, 1).unwrap();
-    let waveform = vec![vec![0.0 as f32; chunksize]; 1];
-    c.bench_function("FftFixedIn f32", |b| {
-        b.iter(|| resampler.process(black_box(&waveform), None).unwrap())
+    let mut resampler = Fft::<f32>::new(44100, 192000, 1024, 2, 1, FixedSync::Input).unwrap();
+    let buffer_in = InterleavedOwned::new(0.0, 1, chunksize);
+    let mut buffer_out = InterleavedOwned::new(0.0, 1, resampler.output_frames_max());
+    c.bench_function("fft sync f32", |b| {
+        b.iter(|| {
+            resampler
+                .process_into_buffer(black_box(&buffer_in), &mut buffer_out, None)
+                .unwrap()
+        })
     });
 }
 
@@ -65,16 +79,18 @@ macro_rules! bench_async_resampler {
             );
             let interpolator = unwrap_helper!($($unwrap)* interpolator);
             let interpolator = Box::new(interpolator);
-            let mut resampler = SincFixedIn::<$ft>::new_with_interpolator(
+            let mut resampler = Async::<$ft>::new_with_sinc_interpolator(
                 resample_ratio,
                 1.1,
                 interpolation_type,
                 interpolator,
                 chunksize,
                 1,
+                FixedAsync::Input,
             ).unwrap();
-            let waveform = vec![vec![0.0 as $ft; chunksize]; 1];
-            c.bench_function($desc, |b| b.iter(|| resampler.process(black_box(&waveform), None).unwrap()));
+            let buffer_in =  InterleavedOwned::new(0.0, 1, chunksize);
+            let mut buffer_out =  InterleavedOwned::new(0.0, 1, resampler.output_frames_max());
+            c.bench_function($desc, |b| b.iter(|| resampler.process_into_buffer(black_box(&buffer_in), &mut buffer_out, None).unwrap()));
         }
     };
 }
@@ -83,48 +99,48 @@ bench_async_resampler!(
     f32,
     ScalarInterpolator,
     SincInterpolationType::Cubic,
-    bench_scalar_async_cubic_32,
-    "scalar async cubic   32",
+    bench_sinc_async_scalar_cubic_32,
+    "sinc async scalar cubic   f32",
     infallible
 );
 bench_async_resampler!(
     f32,
     ScalarInterpolator,
     SincInterpolationType::Linear,
-    bench_scalar_async_linear_32,
-    "scalar async linear  32",
+    bench_sinc_async_scalar_linear_32,
+    "sinc async scalar linear  f32",
     infallible
 );
 bench_async_resampler!(
     f32,
     ScalarInterpolator,
     SincInterpolationType::Nearest,
-    bench_scalar_async_nearest_32,
-    "scalar async nearest 32",
+    bench_sinc_async_scalar_nearest_32,
+    "sinc async scalar nearest f32",
     infallible
 );
 bench_async_resampler!(
     f64,
     ScalarInterpolator,
     SincInterpolationType::Cubic,
-    bench_scalar_async_cubic_64,
-    "scalar async cubic   64",
+    bench_sinc_async_scalar_cubic_64,
+    "sinc async scalar cubic   f64",
     infallible
 );
 bench_async_resampler!(
     f64,
     ScalarInterpolator,
     SincInterpolationType::Linear,
-    bench_scalar_async_linear_64,
-    "scalar async linear  64",
+    bench_sinc_async_scalar_linear_64,
+    "sinc async scalar linear f64",
     infallible
 );
 bench_async_resampler!(
     f64,
     ScalarInterpolator,
     SincInterpolationType::Nearest,
-    bench_scalar_async_nearest_64,
-    "scalar async nearest 64",
+    bench_sinc_async_scalar_nearest_64,
+    "sinc async scalar nearest f64",
     infallible
 );
 
@@ -133,48 +149,48 @@ bench_async_resampler!(
     f32,
     SseInterpolator,
     SincInterpolationType::Cubic,
-    bench_sse_async_cubic_32,
-    "sse async cubic   32"
+    bench_sinc_async_sse_cubic_32,
+    "sinc async sse cubic f32"
 );
 #[cfg(target_arch = "x86_64")]
 bench_async_resampler!(
     f32,
     SseInterpolator,
     SincInterpolationType::Linear,
-    bench_sse_async_linear_32,
-    "sse async linear  32"
+    bench_sinc_async_sse_linear_32,
+    "sinc async sse linear f32"
 );
 #[cfg(target_arch = "x86_64")]
 bench_async_resampler!(
     f32,
     SseInterpolator,
     SincInterpolationType::Nearest,
-    bench_sse_async_nearest_32,
-    "sse async nearest 32"
+    bench_sinc_async_sse_nearest_32,
+    "sinc async sse nearest f32"
 );
 #[cfg(target_arch = "x86_64")]
 bench_async_resampler!(
     f64,
     SseInterpolator,
     SincInterpolationType::Cubic,
-    bench_sse_async_cubic_64,
-    "sse async cubic   64"
+    bench_sinc_async_sse_cubic_64,
+    "sinc async sse cubic f64"
 );
 #[cfg(target_arch = "x86_64")]
 bench_async_resampler!(
     f64,
     SseInterpolator,
     SincInterpolationType::Linear,
-    bench_sse_async_linear_64,
-    "sse async linear  64"
+    bench_sinc_async_sse_linear_64,
+    "sinc async sse linear f64"
 );
 #[cfg(target_arch = "x86_64")]
 bench_async_resampler!(
     f64,
     SseInterpolator,
     SincInterpolationType::Nearest,
-    bench_sse_async_nearest_64,
-    "sse async nearest 64"
+    bench_sinc_async_sse_nearest_64,
+    "sinc async sse nearest f64"
 );
 
 #[cfg(target_arch = "x86_64")]
@@ -182,48 +198,48 @@ bench_async_resampler!(
     f32,
     AvxInterpolator,
     SincInterpolationType::Cubic,
-    bench_avx_async_cubic_32,
-    "avx async cubic   32"
+    bench_sinc_async_avx_cubic_32,
+    "sinc async avx cubic f32"
 );
 #[cfg(target_arch = "x86_64")]
 bench_async_resampler!(
     f32,
     AvxInterpolator,
     SincInterpolationType::Linear,
-    bench_avx_async_linear_32,
-    "avx async linear  32"
+    bench_sinc_async_avx_linear_32,
+    "sinc async avx linear f32"
 );
 #[cfg(target_arch = "x86_64")]
 bench_async_resampler!(
     f32,
     AvxInterpolator,
     SincInterpolationType::Nearest,
-    bench_avx_async_nearest_32,
-    "avx async nearest 32"
+    bench_sinc_async_avx_nearest_32,
+    "sinc async avx nearest f32"
 );
 #[cfg(target_arch = "x86_64")]
 bench_async_resampler!(
     f64,
     AvxInterpolator,
     SincInterpolationType::Cubic,
-    bench_avx_async_cubic_64,
-    "avx async cubic   64"
+    bench_sinc_async_avx_cubic_64,
+    "sinc async avx cubic f64"
 );
 #[cfg(target_arch = "x86_64")]
 bench_async_resampler!(
     f64,
     AvxInterpolator,
     SincInterpolationType::Linear,
-    bench_avx_async_linear_64,
-    "avx async linear  64"
+    bench_sinc_async_avx_linear_64,
+    "sinc async avx linear f64"
 );
 #[cfg(target_arch = "x86_64")]
 bench_async_resampler!(
     f64,
     AvxInterpolator,
     SincInterpolationType::Nearest,
-    bench_avx_async_nearest_64,
-    "avx async nearest 64"
+    bench_sinc_async_avx_nearest_64,
+    "sinc async avx nearest f64"
 );
 
 #[cfg(target_arch = "aarch64")]
@@ -231,189 +247,200 @@ bench_async_resampler!(
     f32,
     NeonInterpolator,
     SincInterpolationType::Cubic,
-    bench_neon_async_cubic_32,
-    "neon async cubic   32"
+    bench_sinc_async_neon_cubic_32,
+    "sinc async neon cubic f32"
 );
 #[cfg(target_arch = "aarch64")]
 bench_async_resampler!(
     f32,
     NeonInterpolator,
     SincInterpolationType::Linear,
-    bench_neon_async_linear_32,
-    "neon async linear  32"
+    bench_sinc_async_neon_linear_32,
+    "sinc async neon linear f32"
 );
 #[cfg(target_arch = "aarch64")]
 bench_async_resampler!(
     f32,
     NeonInterpolator,
     SincInterpolationType::Nearest,
-    bench_neon_async_nearest_32,
-    "neon async nearest 32"
+    bench_sinc_async_neon_nearest_32,
+    "sinc async neon nearest f32"
 );
 #[cfg(target_arch = "aarch64")]
 bench_async_resampler!(
     f64,
     NeonInterpolator,
     SincInterpolationType::Cubic,
-    bench_neon_async_cubic_64,
-    "neon async cubic   64"
+    bench_sinc_async_neon_cubic_64,
+    "sinc async neon cubic f64"
 );
 #[cfg(target_arch = "aarch64")]
 bench_async_resampler!(
     f64,
     NeonInterpolator,
     SincInterpolationType::Linear,
-    bench_neon_async_linear_64,
-    "neon async linear  64"
+    bench_sinc_async_neon_linear_64,
+    "sinc async neon linear f64"
 );
 #[cfg(target_arch = "aarch64")]
 bench_async_resampler!(
     f64,
     NeonInterpolator,
     SincInterpolationType::Nearest,
-    bench_neon_async_nearest_64,
-    "neon async nearest 64"
+    bench_sinc_async_neon_nearest_64,
+    "sinc async neon nearest f64"
 );
 
-macro_rules! bench_fast_async_resampler {
+macro_rules! bench_poly_async_resampler {
     ($ft:ty, $ip:expr, $f:ident, $desc:literal) => {
         fn $f(c: &mut Criterion) {
             let chunksize = 1024;
             let interpolation_type = $ip;
             let resample_ratio = 192000 as f64 / 44100 as f64;
-            let mut resampler =
-                FastFixedIn::<$ft>::new(resample_ratio, 1.1, interpolation_type, chunksize, 1)
-                    .unwrap();
-            let waveform = vec![vec![0.0 as $ft; chunksize]; 1];
+            let mut resampler = Async::<$ft>::new_poly(
+                resample_ratio,
+                1.1,
+                interpolation_type,
+                chunksize,
+                1,
+                FixedAsync::Input,
+            )
+            .unwrap();
+            let buffer_in = InterleavedOwned::new(0.0, 1, chunksize);
+            let mut buffer_out = InterleavedOwned::new(0.0, 1, resampler.output_frames_max());
             c.bench_function($desc, |b| {
-                b.iter(|| resampler.process(black_box(&waveform), None).unwrap())
+                b.iter(|| {
+                    resampler
+                        .process_into_buffer(black_box(&buffer_in), &mut buffer_out, None)
+                        .unwrap()
+                })
             });
         }
     };
 }
 
-bench_fast_async_resampler!(
+bench_poly_async_resampler!(
     f32,
     PolynomialDegree::Septic,
-    bench_fast_async_septic_32,
-    "fast async septic  32"
+    bench_poly_async_septic_32,
+    "poly async septic f32"
 );
-bench_fast_async_resampler!(
+bench_poly_async_resampler!(
     f32,
     PolynomialDegree::Quintic,
-    bench_fast_async_quintic_32,
-    "fast async quintic  32"
+    bench_poly_async_quintic_32,
+    "poly async quintic f32"
 );
-bench_fast_async_resampler!(
+bench_poly_async_resampler!(
     f32,
     PolynomialDegree::Cubic,
-    bench_fast_async_cubic_32,
-    "fast async cubic   32"
+    bench_poly_async_cubic_32,
+    "poly async cubic f32"
 );
-bench_fast_async_resampler!(
+bench_poly_async_resampler!(
     f32,
     PolynomialDegree::Linear,
-    bench_fast_async_linear_32,
-    "fast async linear  32"
+    bench_poly_async_linear_32,
+    "poly async linear f32"
 );
-bench_fast_async_resampler!(
+bench_poly_async_resampler!(
     f32,
     PolynomialDegree::Nearest,
-    bench_fast_async_nearest_32,
-    "fast async nearest 32"
+    bench_poly_async_nearest_32,
+    "poly async nearest f32"
 );
-bench_fast_async_resampler!(
+bench_poly_async_resampler!(
     f64,
     PolynomialDegree::Septic,
-    bench_fast_async_septic_64,
-    "fast async septic  64"
+    bench_poly_async_septic_64,
+    "poly async septic f64"
 );
-bench_fast_async_resampler!(
+bench_poly_async_resampler!(
     f64,
     PolynomialDegree::Quintic,
-    bench_fast_async_quintic_64,
-    "fast async quintic  64"
+    bench_poly_async_quintic_64,
+    "poly async quintic f64"
 );
-bench_fast_async_resampler!(
+bench_poly_async_resampler!(
     f64,
     PolynomialDegree::Cubic,
-    bench_fast_async_cubic_64,
-    "fast async cubic   64"
+    bench_poly_async_cubic_64,
+    "poly async cubic f64"
 );
-bench_fast_async_resampler!(
+bench_poly_async_resampler!(
     f64,
     PolynomialDegree::Linear,
-    bench_fast_async_linear_64,
-    "fast async linear  64"
+    bench_poly_async_linear_64,
+    "poly async linear f64"
 );
-bench_fast_async_resampler!(
+bench_poly_async_resampler!(
     f64,
     PolynomialDegree::Nearest,
-    bench_fast_async_nearest_64,
-    "fast async nearest 64"
+    bench_poly_async_nearest_64,
+    "poly async nearest f64"
 );
 
 #[cfg(feature = "fft_resampler")]
-criterion_group!(fft_benches, bench_fftfixedin, bench_fftfixedin_32,);
+criterion_group!(fft_benches, bench_fft_64, bench_fft_32,);
 
 #[cfg(target_arch = "x86_64")]
 criterion_group!(
     benches,
-    bench_fast_async_septic_32,
-    bench_fast_async_quintic_32,
-    bench_fast_async_cubic_32,
-    bench_fast_async_linear_32,
-    bench_fast_async_nearest_32,
-    bench_fast_async_septic_64,
-    bench_fast_async_quintic_64,
-    bench_fast_async_cubic_64,
-    bench_fast_async_linear_64,
-    bench_fast_async_nearest_64,
-    bench_scalar_async_cubic_32,
-    bench_scalar_async_linear_32,
-    bench_scalar_async_nearest_32,
-    bench_scalar_async_cubic_64,
-    bench_scalar_async_linear_64,
-    bench_scalar_async_nearest_64,
-    bench_sse_async_cubic_32,
-    bench_sse_async_linear_32,
-    bench_sse_async_nearest_32,
-    bench_sse_async_cubic_64,
-    bench_sse_async_linear_64,
-    bench_sse_async_nearest_64,
-    bench_avx_async_cubic_32,
-    bench_avx_async_linear_32,
-    bench_avx_async_nearest_32,
-    bench_avx_async_cubic_64,
-    bench_avx_async_linear_64,
-    bench_avx_async_nearest_64,
+    bench_poly_async_septic_32,
+    bench_poly_async_quintic_32,
+    bench_poly_async_cubic_32,
+    bench_poly_async_linear_32,
+    bench_poly_async_nearest_32,
+    bench_poly_async_septic_64,
+    bench_poly_async_quintic_64,
+    bench_poly_async_cubic_64,
+    bench_poly_async_linear_64,
+    bench_poly_async_nearest_64,
+    bench_sinc_async_scalar_cubic_32,
+    bench_sinc_async_scalar_linear_32,
+    bench_sinc_async_scalar_nearest_32,
+    bench_sinc_async_scalar_cubic_64,
+    bench_sinc_async_scalar_linear_64,
+    bench_sinc_async_scalar_nearest_64,
+    bench_sinc_async_sse_cubic_32,
+    bench_sinc_async_sse_linear_32,
+    bench_sinc_async_sse_nearest_32,
+    bench_sinc_async_sse_cubic_64,
+    bench_sinc_async_sse_linear_64,
+    bench_sinc_async_sse_nearest_64,
+    bench_sinc_async_avx_cubic_32,
+    bench_sinc_async_avx_linear_32,
+    bench_sinc_async_avx_nearest_32,
+    bench_sinc_async_avx_cubic_64,
+    bench_sinc_async_avx_linear_64,
+    bench_sinc_async_avx_nearest_64,
 );
 
 #[cfg(target_arch = "aarch64")]
 criterion_group!(
     benches,
-    bench_fast_async_septic_32,
-    bench_fast_async_quintic_32,
-    bench_fast_async_cubic_32,
-    bench_fast_async_linear_32,
-    bench_fast_async_nearest_32,
-    bench_fast_async_septic_64,
-    bench_fast_async_quintic_64,
-    bench_fast_async_cubic_64,
-    bench_fast_async_linear_64,
-    bench_fast_async_nearest_64,
-    bench_scalar_async_cubic_32,
-    bench_scalar_async_linear_32,
-    bench_scalar_async_nearest_32,
-    bench_scalar_async_cubic_64,
-    bench_scalar_async_linear_64,
-    bench_scalar_async_nearest_64,
-    bench_neon_async_cubic_32,
-    bench_neon_async_linear_32,
-    bench_neon_async_nearest_32,
-    bench_neon_async_cubic_64,
-    bench_neon_async_linear_64,
-    bench_neon_async_nearest_64,
+    bench_poly_async_septic_32,
+    bench_poly_async_quintic_32,
+    bench_poly_async_cubic_32,
+    bench_poly_async_linear_32,
+    bench_poly_async_nearest_32,
+    bench_poly_async_septic_64,
+    bench_poly_async_quintic_64,
+    bench_poly_async_cubic_64,
+    bench_poly_async_linear_64,
+    bench_poly_async_nearest_64,
+    bench_sinc_async_scalar_cubic_32,
+    bench_sinc_async_scalar_linear_32,
+    bench_sinc_async_scalar_nearest_32,
+    bench_sinc_async_scalar_cubic_64,
+    bench_sinc_async_scalar_linear_64,
+    bench_sinc_async_scalar_nearest_64,
+    bench_sinc_async_neon_cubic_32,
+    bench_sinc_async_neon_linear_32,
+    bench_sinc_async_neon_nearest_32,
+    bench_sinc_async_neon_cubic_64,
+    bench_sinc_async_neon_linear_64,
+    bench_sinc_async_neon_nearest_64,
 );
 
 #[cfg(feature = "fft_resampler")]

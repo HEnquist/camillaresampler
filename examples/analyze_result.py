@@ -5,6 +5,7 @@ import numpy.fft as fft
 import sys
 from matplotlib import pyplot as plt
 import math
+import argparse
 
 def blackman_harris(npoints):
     x=np.arange(0,npoints)
@@ -19,7 +20,7 @@ def plot_spect(indata, window=True):
         divfact = npoints/2
         if window:
             wind = blackman_harris(npoints)
-            wf = wf*wind*wind
+            wf = wf*wind
             divfact = sum(wind)/2
         print(npoints)
         t = np.linspace(0, npoints/fs, npoints, endpoint=False) 
@@ -37,26 +38,37 @@ def plot_spect(indata, window=True):
         #plt.gca().set(xlim=(10, srate/2.0))
         #plt.subplot(2,1,2)
         plt.figure(2)
-        plt.plot(wf)
+        plt.plot(t, wf)
         plt.figure(3)
-        plt.plot(np.diff(wf,5))
+        plt.plot(t[0:-5], np.diff(wf,5))
     plt.show()
 
-file_in = sys.argv[1]
-channels = int(sys.argv[2])
-bits = int(sys.argv[4])
-srate = int(sys.argv[3])
 
-if bits == 64:
-    values = np.fromfile(file_in, dtype=float)
-elif bits == 32:
-    values = np.fromfile(file_in, dtype=np.float32)
+parser = argparse.ArgumentParser()
+parser.add_argument("file_in", type=str,
+                    help="input filename")
+parser.add_argument("channels", type=int,
+                    help="number of channels")
+parser.add_argument("samplerate", type=int,
+                    help="sample rate of file")
+parser.add_argument("format", type=str, choices=["f32", "f64", "i16"],
+                    help="sample format")
+parser.add_argument("--no-window", dest= 'window', default=True, action='store_false',
+                    help="skip applying window function")
+args = parser.parse_args()
+
+if args.format == "f64":
+    values = np.fromfile(args.file_in, dtype=float)
+elif args.format == "f32":
+    values = np.fromfile(args.file_in, dtype=np.float32)
+elif args.format == "i16":
+    values = np.fromfile(args.file_in, dtype=np.int16).astype(np.float32) / 2**15 
 
 
 # Let's look at the first channel only..
-values = values.reshape((-1,channels))
+values = values.reshape((-1,args.channels))
 values = values[:,0]
-plot_spect([(values, srate)], window=True)
+plot_spect([(values, args.samplerate)], window=args.window)
 
 
 

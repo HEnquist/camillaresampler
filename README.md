@@ -10,9 +10,9 @@ while returning a variable length output, and vice versa.
 
 Rubato can be used in realtime applications without any allocation during
 processing by preallocating a [Resampler] and using its
-[input_buffer_allocate](Resampler::input_buffer_allocate) and
-[output_buffer_allocate](Resampler::output_buffer_allocate) methods before
-beginning processing. The [log feature](#log-enable-logging) feature should be disabled
+[process_into_buffer](Resampler::process_into_buffer) and
+method to process into apre-allocated output buffer.
+The [log feature](#log-enable-logging) feature should be disabled
 for realtime use (it is disabled by default).
 
 ## Input and output data format
@@ -62,7 +62,7 @@ For simplicity, the output is stored in a temporary buffer during resampling,
 and copied to the destination afterwards.
 
 Preparations:
-1. Create a resampler of suitable type, for example FFTFixedIn which is quite fast and gives good quality.
+1. Create a resampler of suitable type, for example `Fft` which is fast and gives good quality.
    Since neither input or output has any restrictions for the number of frames that can be read or written at a time,
    the chunk size can be chosen arbitrarily. Start with a chunk size of for example 1024.
 2. Create an input buffer.
@@ -111,8 +111,6 @@ Audio APIs such as [CoreAudio](https://crates.io/crates/coreaudio-rs) on MacOS,
 or the cross platform [cpal](https://crates.io/crates/cpal) crate,
 often use callback functions for data exchange.
 
-A complete
-
 When capturing audio from these, the application passes a function to the audio API.
 The API then calls this function periodically, with a pointer to a data buffer containing new audio frames.
 The data buffer size is usually the same on every call, but that varies between APIs.
@@ -151,7 +149,7 @@ for reading and writing uncompressed audio formats.
 
 ### Asynchronous resampling with anti-aliasing
 
-The asynchronous resampler supports SIMD on x86_64 and on aarch64.
+The asynchronous sinc resampler supports SIMD on x86_64 and on aarch64.
 The SIMD capabilities of the CPU are determined at runtime.
 If no supported SIMD instruction set is available, it falls back to a scalar implementation.
 
@@ -161,13 +159,13 @@ On aarch64 (64-bit Arm), it will use Neon if available.
 
 ### Synchronous resampling
 
-The synchronous resamplers benefit from the SIMD support of the RustFFT library.
+The synchronous FFT resampler benefits from the SIMD support of the RustFFT library.
 
 ## Cargo features
 
-### `fft_resampler`: Enable the FFT based synchronous resamplers
+### `fft_resampler`: Enable the FFT based synchronous resampler
 
-This feature is enabled by default. Disable it if the FFT resamplers are not needed,
+This feature is enabled by default. Disable it if the FFT resampler is not needed,
 to save compile time and reduce the resulting binary size.
 
 ### `log`: Enable logging
@@ -187,10 +185,12 @@ RUST_LOG=trace cargo test --features log
 
 ## Example
 
-Resample a single chunk of a dummy audio file from 44100 to 48000 Hz.
+Resample a dummy audio file from 44100 to 48000 Hz.
 See also the "process_f64" example that can be used to process a file from disk.
 ```rust
-use rubato::{Resampler, SincFixedIn, SincInterpolationType, SincInterpolationParameters, WindowFunction};
+use rubato::{Resampler, Async, FixedAsync, Indexing, SincInterpolationType, SincInterpolationParameters, WindowFunction};
+use audioadapter::direct::InterleavedSlice;
+
 let params = SincInterpolationParameters {
     sinc_len: 256,
     f_cutoff: 0.95,
@@ -198,16 +198,55 @@ let params = SincInterpolationParameters {
     oversampling_factor: 256,
     window: WindowFunction::BlackmanHarris2,
 };
-let mut resampler = SincFixedIn::<f64>::new(
+let mut resampler = Async::<f64>::new_sinc(
     48000 as f64 / 44100 as f64,
     2.0,
     params,
     1024,
     2,
+    FixedAsync::Input,
 ).unwrap();
 
-let waves_in = vec![vec![0.0f64; 1024];2];
-let waves_out = resampler.process(&waves_in, None).unwrap();
+// create a short dummy audio clip, assuming it's stereo stored as interleaved f64 values
+let audio_clip = vec![0.0; 2*10000];
+
+// wrap it with an InterleavedSlice Adapter
+let nbr_input_frames = audio_clip.len() / 2;
+let input_adapter = InterleavedSlice::new(&audio_clip, 2, nbr_input_frames).unwrap();
+
+// create a buffer for the output
+let mut outdata = vec![0.0; 2*2*10000];
+let outdata_capacity = outdata.len() / 2;
+let mut output_adapter =
+    InterleavedSlice::new_mut(&mut outdata, 2, outdata_capacity).unwrap();
+
+// Preparations
+let mut indexing = Indexing {
+    input_offset: 0,
+    output_offset: 0,
+    active_channels_mask: None,
+    partial_len: None,
+};
+
+let mut input_frames_left = nbr_input_frames;
+let mut input_frames_next = resampler.input_frames_next();
+
+// Loop over all full chunks.
+// There will be some unprocessed input frames left after the last full chunk.
+// see the `process_f64` example for how to handle those
+// using `partial_len` of the indexing struct.
+// It is also possible to use the `process_all_into_buffer` method
+// to process the entire file (including any last partial chunk) with a single call.
+while input_frames_left >= input_frames_next {
+    let (frames_read, frames_written) = resampler
+        .process_into_buffer(&input_adapter, &mut output_adapter, Some(&indexing))
+        .unwrap();
+
+    indexing.input_offset += frames_read;
+    indexing.output_offset += frames_written;
+    input_frames_left -= frames_read;
+    input_frames_next = resampler.input_frames_next();
+}
 ```
 
 ## Included examples
@@ -215,13 +254,16 @@ let waves_out = resampler.process(&waves_in, None).unwrap();
 The `examples` directory contains a few sample applications for testing the resamplers.
 There are also Python scripts for generating simple test signals as well as analyzing the resampled results.
 
-The examples read and write raw audio data in 64-bit float format.
+The examples read and write raw audio data in either 64-bit float of 16-bit integer format.
 They can be used to process .wav files if the files are first converted to the right format.
-Use `sox` to convert a .wav to raw samples:
+Example, use `sox` to convert a .wav to 64-bit float raw samples:
 ```sh
 sox some_file.wav -e floating-point -b 64 some_file_f64.raw
 ```
-After processing, the result can be converted back to new .wav. This examples converts to 16-bits at 44.1 kHz:
+
+After processing with for instance the `process_f64` example,
+the result can be converted back to new .wav.
+This converts the 64-bit floats to 16-bits at 44.1 kHz:
 ```sh
 sox -e floating-point -b 64 -r 44100 -c 2 resampler_output.raw -e signed-integer -b 16 some_file_resampled.wav
 ```
@@ -234,6 +276,11 @@ The `rubato` crate requires rustc version 1.61 or newer.
 
 ## Changelog
 
+- v0.17.0
+  - New API using the AudioAdapter crate to handle different buffer layouts and sample formats.
+  - Merged the FixedIn, FixedOut and FixedInOut resamplers into single types that supports all modes.
+  - Merged the sinc and polynomial asynchronous resamplers into
+    one type that supports both interpolation modes.
 - v0.16.0
   - Add support for changing the fixed input or output size of the asynchronous resamplers.
 - v0.15.0
